@@ -1,0 +1,20 @@
+{
+  "name": "ai-image-processor",
+  "version": "1.0.0",
+  "description": "AI Image Processor Desktop Application",
+  "main": "electron-dist/main.js",
+  "author": "AI Image Processor",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --config electron-builder.json",
+    "build:portable": "electron-builder --win portable --config electron-builder.json"
+  },
+  "devDependencies": {
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3",
+    "typescript": "5.4.5",
+    "@types/node": "20.14.0"
+  },
+  "dependencies": {}
+}
