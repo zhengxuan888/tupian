@@ -248,7 +248,7 @@ export function AIBackground() {
         <Card className="border border-slate-200 shadow-sm">
           <CardContent className="p-6">
             <Label className="text-base font-semibold text-slate-900 mb-3 block">
-              上传照片
+              上传图片
             </Label>
             {!originalPreview ? (
               <div
@@ -258,7 +258,7 @@ export function AIBackground() {
                 onClick={() => fileInputRef.current?.click()}
               >
                 <Upload className="w-10 h-10 text-slate-400 mx-auto mb-3" />
-                <p className="text-sm text-slate-600 font-medium">点击或拖拽上传照片</p>
+                <p className="text-sm text-slate-600 font-medium">点击或拖拽上传图片</p>
                 <p className="text-xs text-slate-400 mt-1">支持 JPG / PNG / WebP / HEIC（苹果手机）</p>
               </div>
             ) : (
@@ -572,7 +572,7 @@ export function AIBackground() {
       {!originalImage && (
         <div className="text-center py-8">
           <ImageIcon className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <p className="text-sm text-slate-500">上传照片，输入背景描述，AI 自动抠图并合成新背景</p>
+          <p className="text-sm text-slate-500">上传图片，输入背景描述，AI 自动抠图并合成新背景</p>
           <p className="text-xs text-slate-400 mt-1">
             默认使用免费 AI，也可在高级设置中配置自己的 API Key 获得更高质量
           </p>

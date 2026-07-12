@@ -665,7 +665,7 @@ export default function Home() {
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-blue-600 to-indigo-700 text-xs text-white font-semibold shadow-sm">
                 1
               </span>
-              <CardTitle className="text-lg font-semibold text-foreground">上传照片</CardTitle>
+              <CardTitle className="text-lg font-semibold text-foreground">上传图片</CardTitle>
               {photos.length > 0 && (
                 <Badge variant="secondary" className="ml-2 bg-blue-50 text-blue-700 border-blue-100">
                   {photos.length} 张
@@ -1319,7 +1319,7 @@ export default function Home() {
             {(photos.length === 0 || sets.length === 0) && (
               <p className="mt-1 text-center text-xs text-slate-400">
                 {photos.length === 0
-                  ? '请先上传照片'
+                  ? '请先上传图片'
                   : '请至少选择一个国家'}
               </p>
             )}
