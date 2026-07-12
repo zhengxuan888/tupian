@@ -38,6 +38,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AIBackground } from '@/components/ai-background';
 import { WatermarkRemoval } from '@/components/watermark-removal';
+import { BatchGenerator } from '@/components/batch-generator';
 import { PHONES, getPhoneLabel } from '@/lib/phones';
 import { COUNTRIES, REGIONS, countryCodeToFlag } from '@/lib/countries';
 import { writeExifToJpeg } from '@/lib/exif-utils';
@@ -557,7 +558,7 @@ export default function Home() {
                 <span className="text-lg font-semibold">图片处理器</span>
               </h1>
               <p className="text-sm text-slate-500 mt-1">
-                EXIF 批量写入 · AI 背景合成 · 去水印
+                EXIF 批量写入 · AI 背景合成 · 去水印 · 批量生图
               </p>
             </div>
           </div>
@@ -650,6 +651,10 @@ export default function Home() {
             <TabsTrigger value="watermark" className="flex-1 gap-2 rounded-lg data-[state=active]:bg-indigo-50 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm transition-all">
               <Eraser className="w-4 h-4" />
               去水印
+            </TabsTrigger>
+            <TabsTrigger value="batch" className="flex-1 gap-2 rounded-lg data-[state=active]:bg-indigo-50 data-[state=active]:text-indigo-600 data-[state=active]:shadow-sm transition-all">
+              <Copy className="w-4 h-4" />
+              批量生图
             </TabsTrigger>
           </TabsList>
 
@@ -1330,6 +1335,9 @@ export default function Home() {
 
         <TabsContent value="watermark">
           <WatermarkRemoval />
+        </TabsContent>
+        <TabsContent value="batch">
+          <BatchGenerator />
         </TabsContent>
         </Tabs>
 

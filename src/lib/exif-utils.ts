@@ -177,3 +177,71 @@ export function fileToBase64(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
+
+// ============ 辅助函数 ============
+
+/**
+ * 生成最近 N 个月内的随机时间
+ */
+export function getRandomTimeInRecentMonths(months: number = 3): Date {
+  const now = Date.now();
+  const msInMonth = 30 * 24 * 60 * 60 * 1000;
+  const randomOffset = Math.random() * months * msInMonth;
+  return new Date(now - randomOffset);
+}
+
+/**
+ * 生成随机 GPS 偏移（在中心点附近 5km 范围内）
+ */
+export function getRandomGPSOffset(): { latOffset: number; lngOffset: number } {
+  const maxOffset = 0.05; // ~5km
+  return {
+    latOffset: (Math.random() - 0.5) * 2 * maxOffset,
+    lngOffset: (Math.random() - 0.5) * 2 * maxOffset,
+  };
+}
+
+/**
+ * EXIF 数据接口
+ */
+export interface ExifData {
+  make: string;
+  model: string;
+  dateTime: string;
+  latitude: number;
+  longitude: number;
+}
+
+/**
+ * 将 EXIF 数据写入图片 Blob
+ */
+export async function writeExifToBlob(
+  imageBlob: Blob,
+  exifData: ExifData
+): Promise<Blob> {
+  const arrayBuffer = await imageBlob.arrayBuffer();
+  const uint8Array = new Uint8Array(arrayBuffer);
+
+  // 转为 base64
+  let binary = '';
+  for (let i = 0; i < uint8Array.length; i++) {
+    binary += String.fromCharCode(uint8Array[i]);
+  }
+  const jpegBase64 = 'data:image/jpeg;base64,' + btoa(binary);
+
+  // 构造 phone 和 country 对象以调用 writeExifToJpeg
+  const phone = { make: exifData.make, model: exifData.model };
+  const country = { gps: { lat: exifData.latitude, lng: exifData.longitude } };
+
+  // 写入 EXIF
+  const exifBase64 = await writeExifToJpeg(jpegBase64, phone as PhoneInfo, country as CountryInfo, exifData.dateTime);
+
+  // 转回 Blob
+  const byteString = atob(exifBase64.split(',')[1]);
+  const ab = new ArrayBuffer(byteString.length);
+  const ia = new Uint8Array(ab);
+  for (let i = 0; i < byteString.length; i++) {
+    ia[i] = byteString.charCodeAt(i);
+  }
+  return new Blob([ab], { type: 'image/jpeg' });
+}
