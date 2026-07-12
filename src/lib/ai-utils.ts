@@ -60,7 +60,7 @@ export async function generateBackgroundImage(
 }
 
 /**
- * 合成前景和背景
+ * 合成前景和背景（带阴影、边缘柔化、色彩融合）
  */
 export function compositeImages(
   foregroundCanvas: HTMLCanvasElement,
@@ -90,8 +90,97 @@ export function compositeImages(
     drawX = (canvas.width - drawWidth) / 2;
     drawY = (canvas.height - drawHeight) / 2;
 
-    // 绘制前景
-    ctx.drawImage(foregroundCanvas, drawX, drawY, drawWidth, drawHeight);
+    // --- 生成阴影层 ---
+    const shadowCanvas = document.createElement('canvas');
+    shadowCanvas.width = drawWidth;
+    shadowCanvas.height = drawHeight;
+    const shadowCtx = shadowCanvas.getContext('2d')!;
+    // 将前景缩放到目标尺寸
+    shadowCtx.drawImage(foregroundCanvas, 0, 0, drawWidth, drawHeight);
+    // 提取 alpha 通道，变成纯黑半透明
+    const shadowData = shadowCtx.getImageData(0, 0, drawWidth, drawHeight);
+    const sd = shadowData.data;
+    for (let i = 0; i < sd.length; i += 4) {
+      const alpha = sd[i + 3];
+      sd[i] = 0;
+      sd[i + 1] = 0;
+      sd[i + 2] = 0;
+      sd[i + 3] = Math.min(alpha * 0.35, 90);
+    }
+    shadowCtx.putImageData(shadowData, 0, 0);
+
+    // 绘制近处阴影（清晰）
+    ctx.save();
+    ctx.filter = 'blur(10px)';
+    ctx.translate(5, 8);
+    ctx.drawImage(shadowCanvas, drawX, drawY);
+    ctx.restore();
+
+    // 绘制远处阴影（柔和扩散）
+    const shadow2 = document.createElement('canvas');
+    shadow2.width = drawWidth;
+    shadow2.height = drawHeight;
+    const s2ctx = shadow2.getContext('2d')!;
+    s2ctx.drawImage(foregroundCanvas, 0, 0, drawWidth, drawHeight);
+    const s2data = s2ctx.getImageData(0, 0, drawWidth, drawHeight);
+    const d2 = s2data.data;
+    for (let i = 0; i < d2.length; i += 4) {
+      const alpha = d2[i + 3];
+      d2[i] = 0;
+      d2[i + 1] = 0;
+      d2[i + 2] = 0;
+      d2[i + 3] = Math.min(alpha * 0.2, 50);
+    }
+    s2ctx.putImageData(s2data, 0, 0);
+    ctx.save();
+    ctx.filter = 'blur(22px)';
+    ctx.translate(8, 15);
+    ctx.drawImage(shadow2, drawX, drawY);
+    ctx.restore();
+
+    // --- 边缘柔化 + 色彩融合 ---
+    const featherCanvas = document.createElement('canvas');
+    featherCanvas.width = drawWidth;
+    featherCanvas.height = drawHeight;
+    const featherCtx = featherCanvas.getContext('2d')!;
+    featherCtx.filter = 'blur(0.5px)';
+    featherCtx.drawImage(foregroundCanvas, 0, 0, drawWidth, drawHeight);
+    featherCtx.filter = 'none';
+
+    // 采样背景中心色调，微调前景色温
+    const bgSample = ctx.getImageData(
+      Math.floor(canvas.width / 2),
+      Math.floor(canvas.height / 2),
+      10, 10
+    );
+    let bgR = 0, bgG = 0, bgB = 0, bgCount = 0;
+    for (let i = 0; i < bgSample.data.length; i += 4) {
+      if (bgSample.data[i + 3] > 200) {
+        bgR += bgSample.data[i];
+        bgG += bgSample.data[i + 1];
+        bgB += bgSample.data[i + 2];
+        bgCount++;
+      }
+    }
+    if (bgCount > 0) {
+      bgR /= bgCount;
+      bgG /= bgCount;
+      bgB /= bgCount;
+      const fgData = featherCtx.getImageData(0, 0, drawWidth, drawHeight);
+      const fd = fgData.data;
+      const blend = 0.08;
+      for (let i = 0; i < fd.length; i += 4) {
+        if (fd[i + 3] > 0) {
+          fd[i] = Math.min(255, fd[i] * (1 - blend) + bgR * blend);
+          fd[i + 1] = Math.min(255, fd[i + 1] * (1 - blend) + bgG * blend);
+          fd[i + 2] = Math.min(255, fd[i + 2] * (1 - blend) + bgB * blend);
+        }
+      }
+      featherCtx.putImageData(fgData, 0, 0);
+    }
+
+    // 绘制最终前景
+    ctx.drawImage(featherCanvas, drawX, drawY);
 
     canvas.toBlob(
       (blob) => {

@@ -199,7 +199,7 @@ export function AIBackground() {
 
       setProgress(80);
 
-      // Step 3: Composite
+      // Step 3: Composite with realistic blending
       setStep("compositing");
       const canvas = document.createElement("canvas");
       canvas.width = foregroundImg.width;
@@ -208,8 +208,97 @@ export function AIBackground() {
 
       // Draw background (scaled to fit)
       ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
-      // Draw foreground on top
-      ctx.drawImage(foregroundImg, 0, 0);
+
+      // --- Add realistic shadow under the phone ---
+      // Create a shadow canvas from the foreground alpha channel
+      const shadowCanvas = document.createElement("canvas");
+      shadowCanvas.width = foregroundImg.width;
+      shadowCanvas.height = foregroundImg.height;
+      const shadowCtx = shadowCanvas.getContext("2d")!;
+      shadowCtx.drawImage(foregroundImg, 0, 0);
+      // Extract alpha and make it black with reduced opacity
+      const shadowData = shadowCtx.getImageData(0, 0, shadowCanvas.width, shadowCanvas.height);
+      const sd = shadowData.data;
+      for (let i = 0; i < sd.length; i += 4) {
+        const alpha = sd[i + 3];
+        sd[i] = 0;     // R
+        sd[i + 1] = 0; // G
+        sd[i + 2] = 0; // B
+        sd[i + 3] = Math.min(alpha * 0.35, 90); // shadow opacity
+      }
+      shadowCtx.putImageData(shadowData, 0, 0);
+
+      // Draw shadow with offset and slight blur
+      ctx.save();
+      ctx.filter = "blur(12px)";
+      ctx.translate(6, 10); // shadow offset (right and down)
+      ctx.drawImage(shadowCanvas, 0, 0);
+      ctx.restore();
+
+      // Second softer shadow layer for depth
+      ctx.save();
+      ctx.filter = "blur(25px)";
+      ctx.translate(10, 18);
+      shadowCtx.clearRect(0, 0, shadowCanvas.width, shadowCanvas.height);
+      shadowCtx.drawImage(foregroundImg, 0, 0);
+      const sd2 = shadowCtx.getImageData(0, 0, shadowCanvas.width, shadowCanvas.height);
+      const d2 = sd2.data;
+      for (let i = 0; i < d2.length; i += 4) {
+        const alpha = d2[i + 3];
+        d2[i] = 0;
+        d2[i + 1] = 0;
+        d2[i + 2] = 0;
+        d2[i + 3] = Math.min(alpha * 0.2, 50);
+      }
+      shadowCtx.putImageData(sd2, 0, 0);
+      ctx.drawImage(shadowCanvas, 0, 0);
+      ctx.restore();
+
+      // --- Edge feathering: slightly blur the foreground edges ---
+      // Create a feathered version of the foreground
+      const featherCanvas = document.createElement("canvas");
+      featherCanvas.width = foregroundImg.width;
+      featherCanvas.height = foregroundImg.height;
+      const featherCtx = featherCanvas.getContext("2d")!;
+
+      // Draw foreground with slight edge softening
+      featherCtx.filter = "blur(0.5px)";
+      featherCtx.drawImage(foregroundImg, 0, 0);
+      featherCtx.filter = "none";
+
+      // --- Color temperature matching ---
+      // Sample background average color to adjust foreground warmth
+      const bgSample = ctx.getImageData(canvas.width / 2, canvas.height / 2, 10, 10);
+      let bgR = 0, bgG = 0, bgB = 0, bgCount = 0;
+      for (let i = 0; i < bgSample.data.length; i += 4) {
+        if (bgSample.data[i + 3] > 200) {
+          bgR += bgSample.data[i];
+          bgG += bgSample.data[i + 1];
+          bgB += bgSample.data[i + 2];
+          bgCount++;
+        }
+      }
+      if (bgCount > 0) {
+        bgR /= bgCount;
+        bgG /= bgCount;
+        bgB /= bgCount;
+        // Apply subtle color overlay to match background tone
+        const fgData = featherCtx.getImageData(0, 0, featherCanvas.width, featherCanvas.height);
+        const fd = fgData.data;
+        for (let i = 0; i < fd.length; i += 4) {
+          if (fd[i + 3] > 0) {
+            // Blend 8% of background color temperature
+            const blend = 0.08;
+            fd[i] = Math.min(255, fd[i] * (1 - blend) + bgR * blend);
+            fd[i + 1] = Math.min(255, fd[i + 1] * (1 - blend) + bgG * blend);
+            fd[i + 2] = Math.min(255, fd[i + 2] * (1 - blend) + bgB * blend);
+          }
+        }
+        featherCtx.putImageData(fgData, 0, 0);
+      }
+
+      // Draw the feathered, color-matched foreground
+      ctx.drawImage(featherCanvas, 0, 0);
 
       canvas.toBlob(
         (blob) => {
