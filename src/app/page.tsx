@@ -34,6 +34,7 @@ import {
   AlertTriangle,
   HelpCircle,
   Info,
+  Shield,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AIBackground } from '@/components/ai-background';
@@ -42,6 +43,7 @@ import { BatchGenerator } from '@/components/batch-generator';
 import { PHONES, getPhoneLabel } from '@/lib/phones';
 import { COUNTRIES, REGIONS, countryCodeToFlag } from '@/lib/countries';
 import { writeExifToJpeg } from '@/lib/exif-utils';
+import { applyDedup, DEFAULT_DEDUP_OPTIONS } from '@/lib/image-dedup';
 import { fileToBase64WithHeic, isHeic, heicToJpegFile } from '@/lib/heic-utils';
 import { exportToDirectory, canPickDirectory, createZipAndDownload, type ProcessedImage, type ExportResult } from '@/lib/zip-utils';
 
@@ -110,6 +112,7 @@ export default function Home() {
     quality: 92,
     maxSizeKB: 0,
   });
+  const [enableDedup, setEnableDedup] = useState(true);
   const [canPickDir, setCanPickDir] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [browserWarning, setBrowserWarning] = useState('');
@@ -464,8 +467,15 @@ export default function Home() {
           try {
             setProgressText(`正在处理: ${country.name} - ${photo.file.name} (${currentStep + 1}/${totalSteps})`);
             
+            // Step 1: Apply image dedup processing (if enabled)
+            let inputBase64 = photo.base64;
+            if (enableDedup) {
+              inputBase64 = await applyDedup(photo.base64, DEFAULT_DEDUP_OPTIONS);
+            }
+
+            // Step 2: Write EXIF data
             const resultBase64 = await writeExifToJpeg(
-              photo.base64,
+              inputBase64,
               phone,
               country,
               configSet.dateTime,
@@ -538,7 +548,7 @@ export default function Home() {
     } finally {
       setIsProcessing(false);
     }
-  }, [photos, sets, canPickDir, outputSettings]);
+  }, [photos, sets, canPickDir, outputSettings, enableDedup]);
 
   const totalOutput = sets.length * photos.length;
 
@@ -1217,6 +1227,57 @@ export default function Home() {
                   <p className="mt-1 text-xs text-slate-400">填 0 表示不限制</p>
                 </div>
               </div>
+            </div>
+
+            {/* Image Dedup Processing */}
+            <div className="mb-5 rounded-xl border border-border/50 bg-slate-50/50 p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Shield className="h-4 w-4 text-indigo-600" />
+                  <h4 className="text-sm font-medium text-foreground">图片去重处理</h4>
+                  <Badge variant={enableDedup ? 'default' : 'secondary'} className="text-xs">
+                    {enableDedup ? '已开启' : '已关闭'}
+                  </Badge>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEnableDedup(!enableDedup)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    enableDedup ? 'bg-gradient-to-r from-indigo-500 to-purple-600' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                      enableDedup ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              {enableDedup && (
+                <div className="mt-3 space-y-1.5">
+                  <p className="text-xs text-slate-500">
+                    每张图片自动应用以下随机微调（肉眼不可见，但可绕过所有检测）：
+                  </p>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-4">
+                    <span className="text-xs text-slate-600">• 微旋转 (0.3-1.2°)</span>
+                    <span className="text-xs text-slate-600">• 微裁剪 (1-2%)</span>
+                    <span className="text-xs text-slate-600">• 亮度微调 (±5%)</span>
+                    <span className="text-xs text-slate-600">• 对比度微调 (±4%)</span>
+                    <span className="text-xs text-slate-600">• 色温偏移 (±6)</span>
+                    <span className="text-xs text-slate-600">• 随机噪点</span>
+                    <span className="text-xs text-slate-600">• 暗角效果</span>
+                    <span className="text-xs text-slate-600">• JPEG 重压缩</span>
+                  </div>
+                  <p className="text-xs text-indigo-600 font-medium mt-1">
+                    ✓ 绕过 EXIF 检测 &nbsp; ✓ 绕过图片哈希 &nbsp; ✓ 绕过 AI 图像比对
+                  </p>
+                </div>
+              )}
+              {!enableDedup && (
+                <p className="mt-2 text-xs text-amber-600">
+                  关闭后仅修改 EXIF 元数据，图片像素不变。平台可能通过图片哈希检测为重复图片。
+                </p>
+              )}
             </div>
 
             {/* Summary */}
