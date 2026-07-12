@@ -170,3 +170,8 @@ python-desktop/release/
 python-desktop/dist/
 *.exe
 *.asar
+
+# Large build artifacts
+public/*.tar.gz
+public/*.zip
+!public/python-desktop.zip
