@@ -187,3 +187,128 @@ export function describeDedupParams(opts: DedupOptions = DEFAULT_DEDUP_OPTIONS):
 
   return `旋转${rotate}° 裁剪${crop}% 亮度${brightness}% 对比度${contrast}% 色温${colorTemp} 噪点${noise} 暗角${vignette}% 质量${quality}%`;
 }
+
+// ============ 图片尺寸随机化 ============
+
+/**
+ * 随机调整图片尺寸（每张图片输出不同分辨率）
+ * 在原始尺寸的 ±15% 范围内随机缩放
+ */
+export async function randomizeImageSize(imageBase64: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        // 随机缩放比例 0.85 ~ 1.15
+        const scale = 0.85 + Math.random() * 0.3;
+        const newWidth = Math.round(img.width * scale);
+        const newHeight = Math.round(img.height * scale);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0, newWidth, newHeight);
+
+        // 随机 JPEG 质量
+        const quality = 0.88 + Math.random() * 0.08;
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => reject(new Error('图片加载失败'));
+    img.src = imageBase64;
+  });
+}
+
+// ============ 批量水印/标识 ============
+
+export interface WatermarkOptions {
+  /** 水印文字 */
+  text: string;
+  /** 透明度 0-1 */
+  opacity: number;
+  /** 字体大小（相对于图片宽度的百分比） */
+  fontSizePercent: number;
+  /** 位置: 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left' | 'center' */
+  position: string;
+  /** 旋转角度 */
+  rotation: number;
+}
+
+export const DEFAULT_WATERMARK: WatermarkOptions = {
+  text: '',
+  opacity: 0.12,
+  fontSizePercent: 3,
+  position: 'bottom-right',
+  rotation: -15,
+};
+
+/**
+ * 给图片添加极淡的文字水印（增加真实感）
+ */
+export async function addWatermark(
+  imageBase64: string,
+  options: WatermarkOptions = DEFAULT_WATERMARK
+): Promise<string> {
+  if (!options.text) return imageBase64;
+
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, 0, 0);
+
+        const fontSize = Math.round(img.width * options.fontSizePercent / 100);
+        ctx.font = `${fontSize}px -apple-system, "PingFang SC", sans-serif`;
+        ctx.fillStyle = `rgba(255, 255, 255, ${options.opacity})`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        const padding = fontSize * 2;
+        let x = canvas.width / 2;
+        let y = canvas.height / 2;
+
+        switch (options.position) {
+          case 'bottom-right':
+            x = canvas.width - padding - ctx.measureText(options.text).width / 2;
+            y = canvas.height - padding;
+            break;
+          case 'bottom-left':
+            x = padding + ctx.measureText(options.text).width / 2;
+            y = canvas.height - padding;
+            break;
+          case 'top-right':
+            x = canvas.width - padding - ctx.measureText(options.text).width / 2;
+            y = padding;
+            break;
+          case 'top-left':
+            x = padding + ctx.measureText(options.text).width / 2;
+            y = padding;
+            break;
+          case 'center':
+          default:
+            break;
+        }
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate((options.rotation * Math.PI) / 180);
+        ctx.fillText(options.text, 0, 0);
+        ctx.restore();
+
+        const quality = 0.9 + Math.random() * 0.08;
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => reject(new Error('图片加载失败'));
+    img.src = imageBase64;
+  });
+}

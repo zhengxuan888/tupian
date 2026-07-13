@@ -128,28 +128,123 @@ export async function writeExifToJpeg(
   if (modelTag) exifObj['0th'][modelTag] = phone.model;
   
   const softwareTag = getTag('0th', 'Software');
-  if (softwareTag) exifObj['0th'][softwareTag] = 'Photo EXIF Tool';
+  if (softwareTag) exifObj['0th'][softwareTag] = phone.make === 'Apple' ? `${phone.model} iOS ${randomInt(15, 17)}.${randomInt(0, 7)}.${randomInt(0, 3)}` : 'Camera';
   
   const dateTimeTag = getTag('0th', 'DateTime');
   if (dateTimeTag) exifObj['0th'][dateTimeTag] = exifDateTime;
 
-  // Exif IFD - DateTime
+  // Image dimensions
+  const imgWidthTag = getTag('0th', 'ImageWidth');
+  const imgHeightTag = getTag('0th', 'ImageLength');
+  if (imgWidthTag && imgHeightTag) {
+    // Extract from base64 image
+    const imgDimensions = getImageDimensions(jpegBase64);
+    if (imgDimensions) {
+      exifObj['0th'][imgWidthTag] = imgDimensions.width;
+      exifObj['0th'][imgHeightTag] = imgDimensions.height;
+    }
+  }
+
+  // Exif IFD - DateTime + Camera parameters
   const dtOrigTag = getTag('Exif', 'DateTimeOriginal');
   if (dtOrigTag) exifObj['Exif'][dtOrigTag] = exifDateTime;
   
   const dtDigTag = getTag('Exif', 'DateTimeDigitized');
   if (dtDigTag) exifObj['Exif'][dtDigTag] = exifDateTime;
 
-  // UserComment (Exif IFD)
-  if (note && note.trim()) {
-    const commentTag = getTag('Exif', 'UserComment');
-    if (commentTag) {
-      // UserComment requires a charset prefix: "ASCII\0\0\0" + text
-      const commentBytes = [0x41, 0x53, 0x43, 0x49, 0x49, 0x00, 0x00, 0x00]; // "ASCII\0\0\0"
-      for (let i = 0; i < note.length; i++) {
-        commentBytes.push(note.charCodeAt(i));
-      }
-      exifObj['Exif'][commentTag] = commentBytes;
+  // FNumber (aperture) - realistic values for phone cameras
+  const fNumberTag = getTag('Exif', 'FNumber');
+  if (fNumberTag) {
+    const fNumber = phone.make === 'Apple' ? [[15, 10], [18, 10], [22, 10]][randomInt(0, 2)] : [[17, 10], [20, 10], [24, 10]][randomInt(0, 2)];
+    exifObj['Exif'][fNumberTag] = fNumber;
+  }
+
+  // ExposureTime - realistic values
+  const exposureTag = getTag('Exif', 'ExposureTime');
+  if (exposureTag) {
+    const exposures = [[1, 30], [1, 60], [1, 100], [1, 120], [1, 200], [1, 250], [1, 500], [1, 1000]];
+    const exp = exposures[randomInt(0, exposures.length - 1)];
+    exifObj['Exif'][exposureTag] = exp;
+  }
+
+  // ISOSpeedRatings
+  const isoTag = getTag('Exif', 'ISOSpeedRatings');
+  if (isoTag) {
+    const isoValues = [50, 64, 80, 100, 125, 160, 200, 250, 320, 400, 500, 640, 800];
+    exifObj['Exif'][isoTag] = isoValues[randomInt(0, isoValues.length - 1)];
+  }
+
+  // FocalLength (in mm) - phone cameras typically 4-7mm
+  const focalTag = getTag('Exif', 'FocalLength');
+  if (focalTag) {
+    const focalLengths = [[42, 10], [48, 10], [51, 10], [57, 10], [60, 10], [66, 10], [77, 10]];
+    exifObj['Exif'][focalTag] = focalLengths[randomInt(0, focalLengths.length - 1)];
+  }
+
+  // FocalLengthIn35mmFilm
+  const focal35Tag = getTag('Exif', 'FocalLengthIn35mmFilm');
+  if (focal35Tag) {
+    const focal35Values = [24, 26, 28, 30, 35, 42, 52, 77];
+    exifObj['Exif'][focal35Tag] = focal35Values[randomInt(0, focal35Values.length - 1)];
+  }
+
+  // LensModel
+  const lensTag = getTag('Exif', 'LensModel');
+  if (lensTag) {
+    if (phone.make === 'Apple') {
+      const lensModels = [
+        'iPhone back dual camera 4.2mm f/1.8',
+        'iPhone back dual camera 6mm f/2.4',
+        'iPhone back triple camera 4.2mm f/1.8',
+        'iPhone back triple camera 6mm f/2.4',
+        'iPhone back triple camera 1.5mm f/1.5',
+      ];
+      exifObj['Exif'][lensTag] = lensModels[randomInt(0, lensModels.length - 1)];
+    } else {
+      exifObj['Exif'][lensTag] = `${phone.model} rear camera`;
+    }
+  }
+
+  // LensMake
+  const lensMakeTag = getTag('Exif', 'LensMake');
+  if (lensMakeTag) exifObj['Exif'][lensMakeTag] = phone.make;
+
+  // Flash - typically 0 (no flash) for phone photos
+  const flashTag = getTag('Exif', 'Flash');
+  if (flashTag) exifObj['Exif'][flashTag] = randomInt(0, 1) === 0 ? 16 : 24; // 16=No flash, 24=Auto no fire
+
+  // WhiteBalance
+  const wbTag = getTag('Exif', 'WhiteBalance');
+  if (wbTag) exifObj['Exif'][wbTag] = randomInt(0, 1); // 0=Auto, 1=Manual
+
+  // ExposureMode
+  const expModeTag = getTag('Exif', 'ExposureMode');
+  if (expModeTag) exifObj['Exif'][expModeTag] = 0; // 0=Auto
+
+  // MeteringMode
+  const meterTag = getTag('Exif', 'MeteringMode');
+  if (meterTag) exifObj['Exif'][meterTag] = randomInt(2, 5); // 2=Center, 3=Spot, 4=Multi, 5=Pattern
+
+  // SceneCaptureType
+  const sceneTag = getTag('Exif', 'SceneCaptureType');
+  if (sceneTag) exifObj['Exif'][sceneTag] = 0; // 0=Standard
+
+  // ExifVersion
+  const exifVerTag = getTag('Exif', 'ExifVersion');
+  if (exifVerTag) exifObj['Exif'][exifVerTag] = [0x30, 0x32, 0x33, 0x30]; // "0230"
+
+  // ColorSpace
+  const colorTag = getTag('Exif', 'ColorSpace');
+  if (colorTag) exifObj['Exif'][colorTag] = 1; // sRGB
+
+  // PixelXDimension / PixelYDimension
+  const pxTag = getTag('Exif', 'PixelXDimension');
+  const pyTag = getTag('Exif', 'PixelYDimension');
+  if (pxTag && pyTag) {
+    const imgDimensions = getImageDimensions(jpegBase64);
+    if (imgDimensions) {
+      exifObj['Exif'][pxTag] = imgDimensions.width;
+      exifObj['Exif'][pyTag] = imgDimensions.height;
     }
   }
 
@@ -164,6 +259,36 @@ export async function writeExifToJpeg(
   exifObj['GPS'][getTag('GPS', 'GPSLatitude')] = latDMS;
   exifObj['GPS'][getTag('GPS', 'GPSLongitudeRef')] = gpsLng >= 0 ? 'E' : 'W';
   exifObj['GPS'][getTag('GPS', 'GPSLongitude')] = lngDMS;
+
+  // GPS Altitude
+  const altTag = getTag('GPS', 'GPSAltitude');
+  const altRefTag = getTag('GPS', 'GPSAltitudeRef');
+  if (altTag && altRefTag) {
+    const altitude = randomInt(0, 500); // 0-500m
+    exifObj['GPS'][altRefTag] = 0; // Above sea level
+    exifObj['GPS'][altTag] = [altitude, 1];
+  }
+
+  // GPS DateStamp
+  const gpsDateTag = getTag('GPS', 'GPSDateStamp');
+  if (gpsDateTag) {
+    const date = new Date(dateTime);
+    const y = date.getFullYear();
+    const mo = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    exifObj['GPS'][gpsDateTag] = `${y}:${mo}:${d}`;
+  }
+
+  // GPS TimeStamp
+  const gpsTimeTag = getTag('GPS', 'GPSTimeStamp');
+  if (gpsTimeTag) {
+    const date = new Date(dateTime);
+    exifObj['GPS'][gpsTimeTag] = [
+      [date.getHours(), 1],
+      [date.getMinutes(), 1],
+      [date.getSeconds(), 1],
+    ];
+  }
 
   const exifBytes = piexif.dump(exifObj);
   return piexif.insert(exifBytes, jpegBase64);
@@ -244,4 +369,31 @@ export async function writeExifToBlob(
     ia[i] = byteString.charCodeAt(i);
   }
   return new Blob([ab], { type: 'image/jpeg' });
+}
+
+// ============ 内部辅助函数 ============
+
+function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+/**
+ * 从 base64 JPEG 中提取图片尺寸
+ */
+function getImageDimensions(base64: string): { width: number; height: number } | null {
+  try {
+    const base64Data = base64.split(',')[1] || base64;
+    const binary = atob(base64Data);
+    // JPEG SOF0 marker at offset 0xFFC0
+    for (let i = 0; i < binary.length - 10; i++) {
+      if (binary.charCodeAt(i) === 0xFF && binary.charCodeAt(i + 1) === 0xC0) {
+        const height = (binary.charCodeAt(i + 5) << 8) | binary.charCodeAt(i + 6);
+        const width = (binary.charCodeAt(i + 7) << 8) | binary.charCodeAt(i + 8);
+        return { width, height };
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }

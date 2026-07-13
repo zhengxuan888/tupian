@@ -35,6 +35,9 @@ import {
   HelpCircle,
   Info,
   Shield,
+  Maximize2,
+  PenLine,
+  Save,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { AIBackground } from '@/components/ai-background';
@@ -43,7 +46,7 @@ import { BatchGenerator } from '@/components/batch-generator';
 import { PHONES, getPhoneLabel } from '@/lib/phones';
 import { COUNTRIES, REGIONS, countryCodeToFlag } from '@/lib/countries';
 import { writeExifToJpeg } from '@/lib/exif-utils';
-import { applyDedup, DEFAULT_DEDUP_OPTIONS } from '@/lib/image-dedup';
+import { applyDedup, DEFAULT_DEDUP_OPTIONS, randomizeImageSize, addWatermark, DEFAULT_WATERMARK } from '@/lib/image-dedup';
 import { fileToBase64WithHeic, isHeic, heicToJpegFile } from '@/lib/heic-utils';
 import { exportToDirectory, canPickDirectory, createZipAndDownload, type ProcessedImage, type ExportResult } from '@/lib/zip-utils';
 
@@ -126,6 +129,10 @@ export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [browserWarning, setBrowserWarning] = useState('');
   const [showGuide, setShowGuide] = useState(false);
+  const [enableSizeRandom, setEnableSizeRandom] = useState(true);
+  const [watermarkText, setWatermarkText] = useState('');
+  const [savedTemplates, setSavedTemplates] = useState<Array<{ id: string; name: string; sets: ConfigSet[] }>>([]);
+  const [showTemplates, setShowTemplates] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
@@ -147,7 +154,65 @@ export default function Home() {
     } else if (isOldChrome) {
       setBrowserWarning('old-chrome');
     }
+
+    // Load saved templates from localStorage
+    try {
+      const saved = localStorage.getItem('exif-templates');
+      if (saved) {
+        setSavedTemplates(JSON.parse(saved));
+      }
+    } catch {
+      // ignore
+    }
   }, []);
+
+  // Save templates to localStorage
+  const saveTemplatesToStorage = useCallback((templates: Array<{ id: string; name: string; sets: ConfigSet[] }>) => {
+    try {
+      localStorage.setItem('exif-templates', JSON.stringify(templates));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Save current config as template
+  const saveCurrentAsTemplate = useCallback(() => {
+    const name = prompt('请输入模板名称：');
+    if (!name || !name.trim()) return;
+    const batchSets = sets.filter((s) => s.batchId === currentBatchId);
+    if (batchSets.length === 0) {
+      alert('当前批次没有配置，无法保存模板');
+      return;
+    }
+    const newTemplate = {
+      id: Date.now().toString(),
+      name: name.trim(),
+      sets: batchSets.map((s) => ({ ...s })),
+    };
+    const updated = [...savedTemplates, newTemplate];
+    setSavedTemplates(updated);
+    saveTemplatesToStorage(updated);
+    alert(`模板"${name.trim()}"已保存`);
+  }, [sets, currentBatchId, savedTemplates, saveTemplatesToStorage]);
+
+  // Apply template to current batch
+  const applyTemplate = useCallback((template: { id: string; name: string; sets: ConfigSet[] }) => {
+    const newSets = template.sets.map((s) => ({
+      ...s,
+      id: Date.now().toString() + Math.random().toString(36).slice(2, 8),
+      batchId: currentBatchId,
+    }));
+    setSets((prev) => [...prev, ...newSets]);
+    alert(`已应用模板"${template.name}"，新增 ${newSets.length} 套配置`);
+  }, [currentBatchId]);
+
+  // Delete template
+  const deleteTemplate = useCallback((id: string) => {
+    if (!confirm('确定删除此模板？')) return;
+    const updated = savedTemplates.filter((t) => t.id !== id);
+    setSavedTemplates(updated);
+    saveTemplatesToStorage(updated);
+  }, [savedTemplates, saveTemplatesToStorage]);
 
   // Memory cleanup: revoke all object URLs when clearing photos
   const clearAllPhotos = useCallback(() => {
@@ -521,7 +586,7 @@ export default function Home() {
             }
 
             // Step 2: Write EXIF data
-            const resultBase64 = await writeExifToJpeg(
+            let resultBase64 = await writeExifToJpeg(
               inputBase64,
               phone,
               country,
@@ -533,6 +598,19 @@ export default function Home() {
               errors.push(`${photo.file.name} - ${country.name}: EXIF 写入失败`);
               currentStep++;
               continue;
+            }
+
+            // Step 3: Randomize image size (if enabled)
+            if (enableSizeRandom) {
+              resultBase64 = await randomizeImageSize(resultBase64);
+            }
+
+            // Step 4: Add watermark (if text provided)
+            if (watermarkText && watermarkText.trim()) {
+              resultBase64 = await addWatermark(resultBase64, {
+                ...DEFAULT_WATERMARK,
+                text: watermarkText.trim(),
+              });
             }
 
             processedImages.push({
@@ -607,6 +685,121 @@ export default function Home() {
           <div className="flex items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 text-white font-bold text-lg shadow-lg shadow-indigo-500/20">
               AI
+            </div>
+
+            {/* Size Randomization */}
+            <div className="mb-5 rounded-xl border border-border/50 bg-slate-50/50 p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Maximize2 className="h-4 w-4 text-purple-600" />
+                  <h4 className="text-sm font-medium text-foreground">尺寸随机化</h4>
+                  <Badge variant={enableSizeRandom ? 'default' : 'secondary'} className="text-xs">
+                    {enableSizeRandom ? '已开启' : '已关闭'}
+                  </Badge>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEnableSizeRandom(!enableSizeRandom)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    enableSizeRandom ? 'bg-gradient-to-r from-purple-500 to-pink-600' : 'bg-slate-300'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+                      enableSizeRandom ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+              {enableSizeRandom && (
+                <p className="mt-2 text-xs text-slate-500">
+                  每张图片随机缩放 ±15%，输出不同分辨率，进一步绕过尺寸比对检测
+                </p>
+              )}
+            </div>
+
+            {/* Watermark */}
+            <div className="mb-5 rounded-xl border border-border/50 bg-slate-50/50 p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <PenLine className="h-4 w-4 text-amber-600" />
+                <h4 className="text-sm font-medium text-foreground">文字水印</h4>
+                <span className="text-xs text-slate-400">（可选，增加真实感）</span>
+              </div>
+              <Input
+                value={watermarkText}
+                onChange={(e) => setWatermarkText(e.target.value)}
+                placeholder="留空则不添加，例如：自用实拍、个人闲置"
+                className="rounded-[10px]"
+              />
+              <p className="mt-1.5 text-xs text-slate-500">
+                在图片角落添加极淡的文字水印（透明度12%），如"自用实拍"增加买家信任感
+              </p>
+            </div>
+
+            {/* Templates */}
+            <div className="mb-5 rounded-xl border border-border/50 bg-slate-50/50 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Save className="h-4 w-4 text-emerald-600" />
+                  <h4 className="text-sm font-medium text-foreground">配置模板</h4>
+                  <Badge variant="secondary" className="text-xs">{savedTemplates.length} 个</Badge>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowTemplates(!showTemplates)}
+                    className="rounded-[10px] text-xs"
+                  >
+                    {showTemplates ? '收起' : '管理'}
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={saveCurrentAsTemplate}
+                    className="rounded-[10px] text-xs bg-gradient-to-r from-emerald-500 to-teal-600"
+                  >
+                    保存当前配置
+                  </Button>
+                </div>
+              </div>
+              {showTemplates && (
+                <div className="space-y-2">
+                  {savedTemplates.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-2">暂无保存的模板</p>
+                  ) : (
+                    savedTemplates.map((t) => (
+                      <div key={t.id} className="flex items-center justify-between rounded-lg bg-white p-2.5 border border-slate-100">
+                        <div>
+                          <span className="text-sm font-medium text-slate-700">{t.name}</span>
+                          <span className="ml-2 text-xs text-slate-400">{t.sets.length} 套配置</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => applyTemplate(t)}
+                            className="rounded-[8px] text-xs h-7"
+                          >
+                            应用
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => deleteTemplate(t.id)}
+                            className="rounded-[8px] text-xs h-7 text-red-500 hover:text-red-600 hover:bg-red-50"
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+              <p className="mt-2 text-xs text-slate-500">
+                保存常用配置为模板，下次一键套用，不用重新选择国家和手机
+              </p>
             </div>
             <div>
               <h1 className="text-2xl font-bold bg-gradient-to-r from-slate-900 to-slate-700 bg-clip-text text-transparent leading-tight">

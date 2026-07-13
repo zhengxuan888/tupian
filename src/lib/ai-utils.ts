@@ -138,7 +138,7 @@ export function compositeImages(
     ctx.drawImage(shadow2, drawX, drawY);
     ctx.restore();
 
-    // --- 边缘柔化 + 色彩融合 ---
+    // --- 边缘柔化 + 色彩融合 + 环境光反射 ---
     const featherCanvas = document.createElement('canvas');
     featherCanvas.width = drawWidth;
     featherCanvas.height = drawHeight;
@@ -179,8 +179,31 @@ export function compositeImages(
       featherCtx.putImageData(fgData, 0, 0);
     }
 
+    // 环境光反射：在前景底部添加微弱的背景色反射
+    const reflectCanvas = document.createElement('canvas');
+    reflectCanvas.width = drawWidth;
+    reflectCanvas.height = drawHeight;
+    const reflectCtx = reflectCanvas.getContext('2d')!;
+    reflectCtx.drawImage(featherCanvas, 0, 0);
+    const reflectData = reflectCtx.getImageData(0, 0, drawWidth, drawHeight);
+    const rd = reflectData.data;
+    const reflectHeight = Math.floor(drawHeight * 0.15); // 底部15%区域
+    for (let y = drawHeight - reflectHeight; y < drawHeight; y++) {
+      for (let x = 0; x < drawWidth; x++) {
+        const idx = (y * drawWidth + x) * 4;
+        if (rd[idx + 3] > 0) {
+          const distFromBottom = drawHeight - y;
+          const factor = (distFromBottom / reflectHeight) * 0.12;
+          rd[idx] = Math.min(255, rd[idx] * (1 - factor) + bgR * factor);
+          rd[idx + 1] = Math.min(255, rd[idx + 1] * (1 - factor) + bgG * factor);
+          rd[idx + 2] = Math.min(255, rd[idx + 2] * (1 - factor) + bgB * factor);
+        }
+      }
+    }
+    reflectCtx.putImageData(reflectData, 0, 0);
+
     // 绘制最终前景
-    ctx.drawImage(featherCanvas, drawX, drawY);
+    ctx.drawImage(reflectCanvas, drawX, drawY);
 
     canvas.toBlob(
       (blob) => {
