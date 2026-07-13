@@ -128,7 +128,15 @@ export async function writeExifToJpeg(
   if (modelTag) exifObj['0th'][modelTag] = phone.model;
   
   const softwareTag = getTag('0th', 'Software');
-  if (softwareTag) exifObj['0th'][softwareTag] = phone.make === 'Apple' ? `${phone.model} iOS ${randomInt(15, 17)}.${randomInt(0, 7)}.${randomInt(0, 3)}` : 'Camera';
+  if (softwareTag) {
+    if (phone.make === 'Apple') {
+      const [minVer, maxVer] = getIOSVersionRange(phone.model);
+      const iosVer = `${randomInt(minVer, maxVer)}.${randomInt(0, 7)}.${randomInt(0, 3)}`;
+      exifObj['0th'][softwareTag] = `${phone.model} iOS ${iosVer}`;
+    } else {
+      exifObj['0th'][softwareTag] = 'Camera';
+    }
+  }
   
   const dateTimeTag = getTag('0th', 'DateTime');
   if (dateTimeTag) exifObj['0th'][dateTimeTag] = exifDateTime;
@@ -137,12 +145,38 @@ export async function writeExifToJpeg(
   const imgWidthTag = getTag('0th', 'ImageWidth');
   const imgHeightTag = getTag('0th', 'ImageLength');
   if (imgWidthTag && imgHeightTag) {
-    // Extract from base64 image
     const imgDimensions = getImageDimensions(jpegBase64);
     if (imgDimensions) {
       exifObj['0th'][imgWidthTag] = imgDimensions.width;
       exifObj['0th'][imgHeightTag] = imgDimensions.height;
     }
+  }
+
+  // Orientation - random rotation to simulate different shooting angles
+  const orientationTag = getTag('0th', 'Orientation');
+  if (orientationTag) {
+    const orientations = [1, 1, 1, 1, 3, 6, 8]; // 1=normal (more common), 3=180°, 6=90° CW, 8=90° CCW
+    exifObj['0th'][orientationTag] = orientations[randomInt(0, orientations.length - 1)];
+  }
+
+  // EXIF 缩略图（1st IFD）- 随机生成不同的缩略图
+  try {
+    const thumb = generateRandomThumbnail();
+    exifObj['1st'] = {
+      [getTag('0th', 'ImageWidth')]: thumb.width,
+      [getTag('0th', 'ImageLength')]: thumb.height,
+      [getTag('0th', 'Compression')]: 1, // Uncompressed
+      [getTag('0th', 'PhotometricInterpretation')]: 2, // RGB
+      [getTag('0th', 'StripOffsets')]: 0, // Will be fixed by piexifjs
+      [getTag('0th', 'RowsPerStrip')]: thumb.height,
+      [getTag('0th', 'StripByteCounts')]: thumb.data.length,
+      [getTag('0th', 'JPEGInterchangeFormat')]: 0,
+      [getTag('0th', 'JPEGInterchangeFormatLength')]: 0,
+    };
+    // 存储缩略图数据供后续处理
+    (exifObj as any)._thumbnailData = thumb.data;
+  } catch {
+    // 缩略图生成失败不影响主流程
   }
 
   // Exif IFD - DateTime + Camera parameters
@@ -248,9 +282,12 @@ export async function writeExifToJpeg(
     }
   }
 
-  // GPS IFD
-  const gpsLat = Math.max(-90, Math.min(90, country.gps.lat));
-  const gpsLng = Math.max(-180, Math.min(180, country.gps.lng));
+  // GPS IFD - with optional offset for batch consistency
+  const baseLat = Math.max(-90, Math.min(90, country.gps.lat));
+  const baseLng = Math.max(-180, Math.min(180, country.gps.lng));
+  // Add small random offset (±0.001 degrees ≈ ±100m) for batch consistency
+  const gpsLat = baseLat + (Math.random() - 0.5) * 0.002;
+  const gpsLng = baseLng + (Math.random() - 0.5) * 0.002;
   const latDMS = decimalToDMS(gpsLat);
   const lngDMS = decimalToDMS(gpsLng);
   
@@ -335,6 +372,14 @@ export interface ExifData {
   dateTime: string;
   latitude: number;
   longitude: number;
+  /** GPS offset for batch consistency (±0.001 degrees) */
+  gpsOffset?: { lat: number; lng: number };
+  /** Time offset in seconds for batch consistency */
+  timeOffset?: number;
+  /** Random orientation (1-8) */
+  orientation?: number;
+  /** JPEG quality (0.85-0.95) */
+  jpegQuality?: number;
 }
 
 /**
@@ -352,14 +397,27 @@ export async function writeExifToBlob(
   for (let i = 0; i < uint8Array.length; i++) {
     binary += String.fromCharCode(uint8Array[i]);
   }
-  const jpegBase64 = 'data:image/jpeg;base64,' + btoa(binary);
+  let jpegBase64 = 'data:image/jpeg;base64,' + btoa(binary);
+
+  // 应用 JPEG 质量随机化
+  if (exifData.jpegQuality && exifData.jpegQuality < 1) {
+    jpegBase64 = await recompressJpeg(jpegBase64, exifData.jpegQuality);
+  }
 
   // 构造 phone 和 country 对象以调用 writeExifToJpeg
   const phone = { make: exifData.make, model: exifData.model };
   const country = { gps: { lat: exifData.latitude, lng: exifData.longitude } };
 
+  // 应用时间偏移（批次一致性）
+  let dateTime = exifData.dateTime;
+  if (exifData.timeOffset) {
+    const date = new Date(dateTime);
+    date.setSeconds(date.getSeconds() + exifData.timeOffset);
+    dateTime = date.toISOString();
+  }
+
   // 写入 EXIF
-  const exifBase64 = await writeExifToJpeg(jpegBase64, phone as PhoneInfo, country as CountryInfo, exifData.dateTime);
+  const exifBase64 = await writeExifToJpeg(jpegBase64, phone as PhoneInfo, country as CountryInfo, dateTime);
 
   // 转回 Blob
   const byteString = atob(exifBase64.split(',')[1]);
@@ -396,4 +454,147 @@ function getImageDimensions(base64: string): { width: number; height: number } |
     // ignore
   }
   return null;
+}
+
+/**
+ * 生成随机文件名（模拟真实相机命名）
+ */
+export function generateRandomFileName(index?: number): string {
+  const prefixes = ['IMG', 'DSC', 'DSCN', 'P'];
+  const prefix = prefixes[randomInt(0, prefixes.length - 1)];
+  const num = index !== undefined ? String(index).padStart(4, '0') : String(randomInt(1000, 9999));
+  return `${prefix}_${num}.JPG`;
+}
+
+/**
+ * 生成随机缩略图（用于 EXIF 1st IFD）
+ */
+function generateRandomThumbnail(): { width: number; height: number; data: Uint8Array } {
+  // 生成一个 160x120 的随机彩色缩略图
+  const width = 160;
+  const height = 120;
+  const data = new Uint8Array(width * height * 3);
+  
+  // 生成随机渐变色背景
+  const r1 = randomInt(100, 200);
+  const g1 = randomInt(100, 200);
+  const b1 = randomInt(100, 200);
+  const r2 = randomInt(100, 200);
+  const g2 = randomInt(100, 200);
+  const b2 = randomInt(100, 200);
+  
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 3;
+      const t = x / width;
+      data[idx] = Math.floor(r1 + (r2 - r1) * t);
+      data[idx + 1] = Math.floor(g1 + (g2 - g1) * t);
+      data[idx + 2] = Math.floor(b1 + (b2 - b1) * t);
+    }
+  }
+  
+  return { width, height, data };
+}
+
+/**
+ * 获取 iOS 版本范围（根据手机型号）
+ */
+function getIOSVersionRange(model: string): [number, number] {
+  const modelLower = model.toLowerCase();
+  if (modelLower.includes('iphone 15') || modelLower.includes('iphone 16')) return [17, 18];
+  if (modelLower.includes('iphone 14')) return [16, 17];
+  if (modelLower.includes('iphone 13')) return [15, 17];
+  if (modelLower.includes('iphone 12')) return [14, 16];
+  if (modelLower.includes('iphone 11')) return [13, 16];
+  if (modelLower.includes('iphone x')) return [11, 15];
+  if (modelLower.includes('iphone 8') || modelLower.includes('iphone 7')) return [11, 14];
+  return [15, 17]; // 默认
+}
+
+/**
+ * 生成 ICC sRGB 色彩配置（简化版）
+ */
+function generateICCsRGB(): Uint8Array {
+  // 简化的 sRGB ICC 配置（实际应该使用完整的 ICC 配置）
+  // 这里生成一个最小的有效 ICC 配置
+  const header = new Uint8Array([
+    0x00, 0x00, 0x01, 0x1C, // 配置大小
+    0x61, 0x70, 0x70, 0x6C, // 'appl'
+    0x00, 0x00, 0x00, 0x00, // 保留
+    0x6D, 0x6E, 0x74, 0x72, // 'mntr'
+    0x52, 0x47, 0x42, 0x20, // 'RGB '
+    0x58, 0x59, 0x5A, 0x20, // 'XYZ '
+    0x00, 0x00, 0x00, 0x00, // 日期
+    0x61, 0x63, 0x73, 0x70, // 'acsp'
+    0x41, 0x50, 0x50, 0x4C, // 'APPL'
+  ]);
+  return header;
+}
+
+/**
+ * 重新压缩 JPEG（用于质量随机化）
+ */
+async function recompressJpeg(jpegBase64: string, quality: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas 2D context not available'));
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('Failed to recompress JPEG'));
+    img.src = jpegBase64;
+  });
+}
+
+// ============ 批次一致性辅助函数 ============
+
+/**
+ * 生成批次 GPS 偏移（同一批次内 GPS 坐标相近，±100m）
+ */
+export function generateBatchGpsOffset(): { lat: number; lng: number } {
+  return {
+    lat: (Math.random() - 0.5) * 0.002, // ±0.001 degrees ≈ ±100m
+    lng: (Math.random() - 0.5) * 0.002,
+  };
+}
+
+/**
+ * 生成批次时间偏移（同一批次内拍摄时间连续，相隔 30-180 秒）
+ */
+export function generateBatchTimeOffset(index: number): number {
+  // 第一张为基准，后续每张相隔 30-180 秒
+  if (index === 0) return 0;
+  let offset = 0;
+  for (let i = 1; i <= index; i++) {
+    offset += randomInt(30, 180);
+  }
+  return offset;
+}
+
+/**
+ * 清除图片原有 EXIF（返回干净的 JPEG）
+ */
+export async function stripExif(imageBase64: string): Promise<string> {
+  if (!piexif) return imageBase64;
+  try {
+    // 加载并重新 dump，不保留任何原有 EXIF
+    const exifObj = piexif.load(imageBase64);
+    // 清空所有 IFD
+    exifObj['0th'] = {};
+    exifObj['Exif'] = {};
+    exifObj['GPS'] = {};
+    exifObj['1st'] = {};
+    const cleanExif = piexif.dump(exifObj);
+    return piexif.insert(cleanExif, imageBase64);
+  } catch {
+    return imageBase64;
+  }
 }
