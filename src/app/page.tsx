@@ -52,6 +52,7 @@ interface PhotoFile {
   file: File;
   base64: string;
   preview: string;
+  batchId: string; // 批次ID，同一批次的照片和配置才会组合
 }
 
 interface ConfigSet {
@@ -60,6 +61,12 @@ interface ConfigSet {
   phoneIndex: number;
   dateTime: string;
   note: string;
+  batchId: string; // 批次ID
+}
+
+interface Batch {
+  id: string;
+  name: string;
 }
 
 interface OutputSettings {
@@ -113,6 +120,8 @@ export default function Home() {
     maxSizeKB: 0,
   });
   const [enableDedup, setEnableDedup] = useState(true);
+  const [batches, setBatches] = useState<Batch[]>([{ id: 'default', name: '默认批次' }]);
+  const [currentBatchId, setCurrentBatchId] = useState('default');
   const [canPickDir, setCanPickDir] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [browserWarning, setBrowserWarning] = useState('');
@@ -189,6 +198,7 @@ export default function Home() {
           file: processedFile,
           base64,
           preview: URL.createObjectURL(processedFile),
+          batchId: currentBatchId,
         });
       } catch (err) {
         console.error('Failed to process file:', file.name, err);
@@ -323,6 +333,29 @@ export default function Home() {
     });
   }, []);
 
+  // Batch management
+  const addBatch = useCallback((name: string) => {
+    const newBatch: Batch = { id: generateId(), name };
+    setBatches(prev => [...prev, newBatch]);
+    setCurrentBatchId(newBatch.id);
+  }, []);
+
+  const removeBatch = useCallback((id: string) => {
+    if (id === 'default') return; // 不能删除默认批次
+    setBatches(prev => prev.filter(b => b.id !== id));
+    // 删除该批次的照片和配置
+    setPhotos(prev => {
+      prev.filter(p => p.batchId === id).forEach(p => URL.revokeObjectURL(p.preview));
+      return prev.filter(p => p.batchId !== id);
+    });
+    setSets(prev => prev.filter(s => s.batchId !== id));
+    setCurrentBatchId('default');
+  }, []);
+
+  const switchBatch = useCallback((id: string) => {
+    setCurrentBatchId(id);
+  }, []);
+
   // Set management handlers
   const addSetWithCountry = useCallback((countryCode: string) => {
     const newSet: ConfigSet = {
@@ -331,9 +364,10 @@ export default function Home() {
       phoneIndex: 0,
       dateTime: getDefaultDateTime(),
       note: '',
+      batchId: currentBatchId,
     };
     setSets((prev) => [...prev, newSet]);
-  }, []);
+  }, [currentBatchId]);
 
   const updateSet = useCallback(
     (id: string, field: keyof ConfigSet, value: string | number) => {
@@ -373,11 +407,12 @@ export default function Home() {
         phoneIndex: getRandomPhoneIndex(),
         dateTime: getRandomDateTime(),
         note: '',
+        batchId: currentBatchId,
       });
     }
     setSets((prev) => [...prev, ...newSets]);
     setBatchCount('');
-  }, [batchCount]);
+  }, [batchCount, currentBatchId]);
 
   // Batch add: add N sets for a specific country
   const batchAddCountry = useCallback(
@@ -390,11 +425,12 @@ export default function Home() {
           phoneIndex: getRandomPhoneIndex(),
           dateTime: getRandomDateTime(),
           note: '',
+          batchId: currentBatchId,
         });
       }
       setSets((prev) => [...prev, ...newSets]);
     },
-    []
+    [currentBatchId]
   );
 
   // Filtered countries based on region and search
@@ -453,7 +489,15 @@ export default function Home() {
     const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
 
     try {
-      const totalSteps = sets.length * photos.length;
+      // Calculate total steps: only combine photos and configs within the same batch
+      const batchPhotoCount: Record<string, number> = {};
+      const batchSetCount: Record<string, number> = {};
+      photos.forEach(p => { batchPhotoCount[p.batchId] = (batchPhotoCount[p.batchId] || 0) + 1; });
+      sets.forEach(s => { batchSetCount[s.batchId] = (batchSetCount[s.batchId] || 0) + 1; });
+      let totalSteps = 0;
+      for (const batchId of Object.keys(batchPhotoCount)) {
+        totalSteps += (batchPhotoCount[batchId] || 0) * (batchSetCount[batchId] || 0);
+      }
       let currentStep = 0;
       const processedImages: ProcessedImage[] = [];
       const errors: string[] = [];
@@ -463,7 +507,10 @@ export default function Home() {
         const phone = PHONES[configSet.phoneIndex];
         if (!country || !phone) continue;
 
-        for (const photo of photos) {
+        // Only process photos from the same batch
+        const batchPhotos = photos.filter(p => p.batchId === configSet.batchId);
+
+        for (const photo of batchPhotos) {
           try {
             setProgressText(`正在处理: ${country.name} - ${photo.file.name} (${currentStep + 1}/${totalSteps})`);
             
@@ -550,7 +597,7 @@ export default function Home() {
     }
   }, [photos, sets, canPickDir, outputSettings, enableDedup]);
 
-  const totalOutput = sets.length * photos.length;
+  const totalOutput = photos.filter(p => p.batchId === currentBatchId).length * sets.filter(s => s.batchId === currentBatchId).length;
 
   return (
     <div className="min-h-screen">
@@ -780,9 +827,60 @@ export default function Home() {
               )}
             </div>
 
+            {/* Batch Management */}
+            <div className="mt-4 rounded-xl border border-border/50 bg-slate-50/50 p-3">
+              <div className="flex items-center gap-2 mb-2">
+                <FolderOpen className="h-4 w-4 text-indigo-600" />
+                <span className="text-sm font-medium text-foreground">批次管理</span>
+                <span className="text-xs text-slate-500">（不同批次的图片和配置独立处理，不会混合）</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {batches.map(batch => {
+                  const photoCount = photos.filter(p => p.batchId === batch.id).length;
+                  const setCount = sets.filter(s => s.batchId === batch.id).length;
+                  return (
+                    <button
+                      key={batch.id}
+                      type="button"
+                      onClick={() => switchBatch(batch.id)}
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                        currentBatchId === batch.id
+                          ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-sm'
+                          : 'bg-white border border-slate-200 text-slate-600 hover:border-indigo-300'
+                      }`}
+                    >
+                      {batch.name}
+                      <span className={`text-xs ${currentBatchId === batch.id ? 'text-white/80' : 'text-slate-400'}`}>
+                        ({photoCount}图/{setCount}配置)
+                      </span>
+                      {batch.id !== 'default' && (
+                        <span
+                          onClick={(e) => { e.stopPropagation(); removeBatch(batch.id); }}
+                          className="ml-1 hover:text-red-300 cursor-pointer"
+                        >
+                          ×
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const name = prompt('输入新批次名称：');
+                    if (name && name.trim()) addBatch(name.trim());
+                  }}
+                  className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium bg-white border border-dashed border-slate-300 text-slate-500 hover:border-indigo-400 hover:text-indigo-600 transition-all"
+                >
+                  <Plus className="h-3 w-3" />
+                  新建批次
+                </button>
+              </div>
+            </div>
+
             {photos.length > 0 && (
               <div className="mt-4 grid grid-cols-4 gap-3 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10">
-                {photos.map((photo) => (
+                {photos.filter(p => p.batchId === currentBatchId).map((photo) => (
                   <div key={photo.id} className="group relative aspect-square">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
@@ -1012,8 +1110,8 @@ export default function Home() {
                 <p className="text-xs">先在上方选择国家</p>
               </div>
             ) : (
-              <div className={`space-y-3 ${sets.length > 20 ? 'max-h-[600px] overflow-y-auto pr-2' : ''}`}>
-                {sets.map((configSet, index) => {
+              <div className={`space-y-3 ${sets.filter(s => s.batchId === currentBatchId).length > 20 ? 'max-h-[600px] overflow-y-auto pr-2' : ''}`}>
+                {sets.filter(s => s.batchId === currentBatchId).map((configSet, index) => {
                   const country = COUNTRIES.find(
                     (c) => c.code === configSet.countryCode
                   );
@@ -1285,27 +1383,27 @@ export default function Home() {
               <div className="grid grid-cols-3 gap-4 text-center">
                 <div>
                   <p className="text-2xl font-bold text-slate-900">
-                    {photos.length}
+                    {photos.filter(p => p.batchId === currentBatchId).length}
                   </p>
-                  <p className="text-xs text-slate-500">输入照片</p>
+                  <p className="text-xs text-slate-500">当前批次图片</p>
                 </div>
                 <div>
                   <p className="text-2xl font-bold text-slate-900">
-                    {sets.length}
+                    {sets.filter(s => s.batchId === currentBatchId).length}
                   </p>
-                  <p className="text-xs text-slate-500">配置套数</p>
+                  <p className="text-xs text-slate-500">当前批次配置</p>
                 </div>
                 <div>
                   <p className="text-2xl font-bold text-blue-800">
-                    {totalOutput}
+                    {photos.filter(p => p.batchId === currentBatchId).length * sets.filter(s => s.batchId === currentBatchId).length}
                   </p>
                   <p className="text-xs text-slate-500">预计输出</p>
                 </div>
               </div>
-              {sets.length > 0 && (
+              {sets.filter(s => s.batchId === currentBatchId).length > 0 && (
                 <div className="mt-3">
                   <div className="flex flex-wrap gap-1.5">
-                    {sets.slice(0, 20).map((s) => {
+                    {sets.filter(s => s.batchId === currentBatchId).slice(0, 20).map((s) => {
                       const c = COUNTRIES.find((cc) => cc.code === s.countryCode);
                       return (
                         <Badge key={s.id} variant="secondary" className="text-xs">
@@ -1313,15 +1411,27 @@ export default function Home() {
                         </Badge>
                       );
                     })}
-                    {sets.length > 20 && (
+                    {sets.filter(s => s.batchId === currentBatchId).length > 20 && (
                       <Badge variant="outline" className="text-xs">
-                        +{sets.length - 20} 更多
+                        +{sets.filter(s => s.batchId === currentBatchId).length - 20} 更多
                       </Badge>
                     )}
                   </div>
                   <p className="mt-2 text-xs text-slate-500">
-                    输出结构：{new Set(sets.map(s => s.countryCode)).size} 个国家文件夹，每个文件夹里 {photos.length} 张图
+                    当前批次输出：{new Set(sets.filter(s => s.batchId === currentBatchId).map(s => s.countryCode)).size} 个国家文件夹，每个文件夹里 {photos.filter(p => p.batchId === currentBatchId).length} 张图
                   </p>
+                </div>
+              )}
+              {batches.length > 1 && (
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <p className="text-xs text-slate-500 mb-1">全部批次概览：</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {batches.map(batch => (
+                      <Badge key={batch.id} variant="outline" className="text-xs">
+                        {batch.name}: {photos.filter(p => p.batchId === batch.id).length}图 × {sets.filter(s => s.batchId === batch.id).length}配置 = {photos.filter(p => p.batchId === batch.id).length * sets.filter(s => s.batchId === batch.id).length}张
+                      </Badge>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
